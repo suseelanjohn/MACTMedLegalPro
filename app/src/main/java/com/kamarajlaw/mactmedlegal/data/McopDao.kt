@@ -14,10 +14,10 @@ interface McopDao {
     fun observeCaseById(caseId: Long): Flow<FullCaseBundle?>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsertCase(case: CaseEntity): Long
+    suspend fun upsertCase(caseEntity: CaseEntity): Long
 
     @Delete
-    suspend fun deleteCase(case: CaseEntity)
+    suspend fun deleteCase(caseEntity: CaseEntity)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertInjury(pin: InjuryPinEntity)
