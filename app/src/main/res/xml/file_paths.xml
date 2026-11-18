@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <files-path name="case_docs" path="case_docs/" />
+    <cache-path name="court_briefs" path="court_briefs/" />
+</paths>
