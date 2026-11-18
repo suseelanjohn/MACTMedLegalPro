@@ -1,10 +1,10 @@
-name: Build MACT MedLegal Pro APK
+name: Build MACT MedLegal Pro Debug APK
 
 on:
   workflow_dispatch:
 
 jobs:
-  build-apk:
+  build-debug:
     runs-on: ubuntu-latest
 
     steps:
@@ -19,6 +19,8 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platforms;android-35 build-tools;35.0.0
 
       - name: Setup Gradle 8.11.1
         uses: gradle/actions/setup-gradle@v4
