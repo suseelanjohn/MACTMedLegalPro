@@ -28,7 +28,7 @@ jobs:
           gradle-version: 8.11.1
 
       - name: Build Debug APK
-        run: gradle assembleDebug --stacktrace
+        run: gradle assembleDebug -Pandroid.useAndroidX=true --stacktrace
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
