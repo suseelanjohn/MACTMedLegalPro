@@ -7,7 +7,7 @@ plugins {
 
 android {
     namespace = "com.kamarajlaw.mactmedlegal"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.kamarajlaw.mactmedlegal"
@@ -31,8 +31,8 @@ android {
 }
 
 dependencies {
-    // Jetpack Compose BOM
-    implementation(platform("androidx.compose:compose-bom:2026.09.00"))
+    // Verified stable Compose BOM compatible with Kotlin 2.0.21 & AGP 8.7.2
+    implementation(platform("androidx.compose:compose-bom:2024.10.01"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
