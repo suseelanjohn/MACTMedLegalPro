@@ -11,7 +11,7 @@ android {
 
     defaultConfig {
         applicationId = "com.kamarajlaw.mactmedlegal"
-        minSdk = 24
+        minSdk = 26
         targetSdk = 35
         versionCode = 1
         versionName = "1.0.0"
@@ -31,7 +31,7 @@ android {
 }
 
 dependencies {
-    // Jetpack Compose BOM (Latest 2026 Stable)
+    // Jetpack Compose BOM
     implementation(platform("androidx.compose:compose-bom:2026.09.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")
@@ -39,12 +39,15 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
 
+    // Required for Theme.Material3.DayNight.NoActionBar in AndroidManifest.xml
+    implementation("com.google.android.material:material:1.12.0")
+
     // Room Local Database
     val roomVersion = "2.6.1"
     implementation("androidx.room:room-runtime:$roomVersion")
     implementation("androidx.room:room-ktx:$roomVersion")
     ksp("androidx.room:room-compiler:$roomVersion")
 
-    // Google ML Kit Document Scanner (On-device multi-page PDF/JPEG scan)
+    // Google ML Kit Document Scanner
     implementation("com.google.android.gms:play-services-mlkit-document-scanner:16.0.0")
 }
