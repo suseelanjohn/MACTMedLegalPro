@@ -37,6 +37,8 @@ data class CaseAnalysisReport(
     val medicalScore: Int,
     val incomeScore: Int,
     val fitnessVerdict: String,
+    val isStrong: Boolean,
+    val isModerate: Boolean,
     val defences: List<DefenceAlert>,
     val elapsedYears: Double,
     val totalExpensesSpent: Double,
@@ -112,6 +114,15 @@ object ValuationEngine {
 
         // 2. Anticipated Insurer Defences
         val defences = buildList {
+            if (!c.hasActiveInsurance) {
+                add(
+                    DefenceAlert(
+                        title = "No Active Third-Party Insurance Policy",
+                        legalPrinciple = "Owner Liability Only (Sec. 146 MV Act)",
+                        counterStrategy = "Verify cover note / renewal grace period; proceed directly against registered vehicle owner & attach vehicle."
+                    )
+                )
+            }
             if (!c.hasValidDriverLicenceAndBadge) {
                 add(
                     DefenceAlert(
@@ -126,7 +137,7 @@ object ValuationEngine {
                     DefenceAlert(
                         title = "Contributory Negligence Plea (10%–25% Cut Risk)",
                         legalPrinciple = "Mohammed Siddique vs. National Insurance Co.",
-                        counterStrategy = "Rely on Spot Mahazar (Ex.P2) & MVI Report to show sole negligence of offending vehicle; non-wearing of helmet alone does not establish causal negligence."
+                        counterStrategy = "Rely on Spot Mahazar (Ex.P2) & MVI Report to prove sole negligence of offending vehicle."
                     )
                 )
             }
@@ -191,6 +202,8 @@ object ValuationEngine {
             medicalScore = medicalScore,
             incomeScore = incomeScore,
             fitnessVerdict = fitnessVerdict,
+            isStrong = totalScore >= 75,
+            isModerate = totalScore in 50..74,
             defences = defences,
             elapsedYears = elapsedYears,
             totalExpensesSpent = totalSpent,
@@ -231,7 +244,7 @@ object ValuationEngine {
                     principalAward = principal,
                     accruedInterest = interest,
                     grossTotal = principal + interest,
-                    adjustmentNote = "Fixed statutory liability under Sec. 164 MV Act."
+                    adjustmentNote = "Fixed statutory liability under Sec. 164 MV Act (₹2.5L grievous / ₹5L fatal)."
                 )
             }
 
@@ -314,7 +327,7 @@ object ValuationEngine {
         interestFactor: Double
     ): AwardBreakdown {
         if (targetPrincipalBump <= 0.0 || c.claimCategory == ClaimCategory.SECTION_164_NO_FAULT) {
-            return projA.copy(adjustmentNote = "No litigation expenses logged yet to absorb.")
+            return projA.copy(adjustmentNote = "Log expenses in Expenses tab to auto-calibrate Projection B target heads.")
         }
 
         if (c.claimCategory == ClaimCategory.FATAL_DEATH) {
@@ -362,7 +375,7 @@ object ValuationEngine {
                 principalAward = newPrincipal,
                 accruedInterest = newInterest,
                 grossTotal = newPrincipal + newInterest,
-                adjustmentNote = "Disability projected at ${newDisPct.toInt()}% (from ${projA.effectiveDisabilityPercent.toInt()}%) + non-pecuniary heads to tally expenses."
+                adjustmentNote = "Functional Disability stepped up ${projA.effectiveDisabilityPercent.toInt()}% → ${newDisPct.toInt()}% + non-pecuniary heads to absorb spend."
             )
         } else {
             val newPain = projA.painAndSuffering + (targetPrincipalBump * 0.6)
@@ -376,7 +389,7 @@ object ValuationEngine {
                 principalAward = newPrincipal,
                 accruedInterest = newInterest,
                 grossTotal = newPrincipal + newInterest,
-                adjustmentNote = "Pain & Suffering and Attendant/Nourishment heads adjusted to tally expenses (0% functional disability)."
+                adjustmentNote = "Pain & Suffering and Attendant/Nourishment heads adjusted to absorb spend (0% functional disability)."
             )
         }
     }

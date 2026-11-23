@@ -2,12 +2,12 @@ package com.kamarajlaw.mactmedlegal.data
 
 import androidx.room.*
 
-enum class ClaimCategory {
-    INJURY_FUNCTIONAL_DISABILITY, // Sec 166 Multiplier Method (Raj Kumar)
-    INJURY_GRIEVOUS_NO_DISABILITY,// Sec 166 Lump-sum + Treatment Loss (0% functional disability)
-    INJURY_SIMPLE,                // Sec 166 Simple Injuries
-    FATAL_DEATH,                  // Sec 166 Strict Pranay Sethi + Sarla Verma
-    SECTION_164_NO_FAULT          // Sec 164 Fixed Liability (₹5L Death / ₹2.5L Grievous)
+enum class ClaimCategory(val label: String, val shortLabel: String) {
+    INJURY_FUNCTIONAL_DISABILITY("Sec. 166 Functional Disability", "Injury (FD%)"),
+    INJURY_GRIEVOUS_NO_DISABILITY("Sec. 166 Grievous (0% FD)", "Grievous 0%"),
+    INJURY_SIMPLE("Sec. 166 Simple Injury", "Simple"),
+    FATAL_DEATH("Sec. 166 Fatal / Death Claim", "Fatal / Death"),
+    SECTION_164_NO_FAULT("Sec. 164 Fixed No-Fault", "Sec. 164")
 }
 
 @Entity(tableName = "cases")
@@ -46,9 +46,9 @@ data class CaseEntity(
 
     // Advocate Fee Configuration
     val isFeePercentage: Boolean = true,
-    val professionalFeeValue: Double = 10.0, // 10% or flat ₹
+    val professionalFeeValue: Double = 10.0,
 
-    // Spot Mahazar Reconstruction Notes
+    // Spot Mahazar Reconstruction
     val roadLayout: String = "TWO_LANE",
     val spotMahazarNotes: String = ""
 )
@@ -62,11 +62,13 @@ data class InjuryPinEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val caseId: Long,
     val isPosterior: Boolean,
-    val normX: Float, // 0f..1f
-    val normY: Float, // 0f..1f
+    val normX: Float,
+    val normY: Float,
+    val regionName: String,
     val diagnosis: String,
     val severity: String, // "GRIEVOUS", "SIMPLE", "NERVE"
-    val exhibitTag: String
+    val exhibitTag: String,
+    val occupationalImpact: String = ""
 )
 
 @Entity(
@@ -78,7 +80,7 @@ data class LegalHeirEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val caseId: Long,
     val name: String,
-    val relation: String, // "Spouse", "Minor Child", "Mother", "Father"
+    val relation: String,
     val age: Int,
     val sharePercent: Double
 )
@@ -91,7 +93,7 @@ data class LegalHeirEntity(
 data class SceneItemEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val caseId: Long,
-    val itemType: String, // "LORRY", "CAR", "BIKE", "IMPACT_X", "SKID"
+    val itemType: String, // "LORRY", "CAR", "BIKE", "PEDESTRIAN", "IMPACT_X", "SKID"
     val label: String,
     val normX: Float,
     val normY: Float,
@@ -107,8 +109,8 @@ data class CaseDocumentEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val caseId: Long,
     val title: String,
-    val exhibitNumber: String, // e.g., "Ex.P1 FIR", "Ex.P8 Medical Bill"
-    val category: String,      // "COURT_RECORD", "MEDICAL_RECORD", "MEDICAL_BILL"
+    val exhibitNumber: String,
+    val category: String, // "COURT_RECORD", "MEDICAL_RECORD", "MEDICAL_BILL"
     val billAmount: Double = 0.0,
     val localFilePath: String,
     val pageCount: Int = 1,
@@ -125,7 +127,7 @@ data class CaseExpenseEntity(
     val caseId: Long,
     val particulars: String,
     val amount: Double,
-    val isClientAdvance: Boolean = false, // false = Office Spend, true = Advance Received
+    val isClientAdvance: Boolean = false,
     val dateMillis: Long = System.currentTimeMillis()
 )
 

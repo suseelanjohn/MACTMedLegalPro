@@ -34,12 +34,21 @@ interface McopDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertSceneItem(item: SceneItemEntity)
 
+    @Delete
+    suspend fun deleteSceneItem(item: SceneItemEntity)
+
     @Query("DELETE FROM scene_items WHERE caseId = :caseId")
     suspend fun clearScene(caseId: Long)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertDocument(doc: CaseDocumentEntity)
 
+    @Delete
+    suspend fun deleteDocument(doc: CaseDocumentEntity)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertExpense(expense: CaseExpenseEntity)
+
+    @Delete
+    suspend fun deleteExpense(expense: CaseExpenseEntity)
 }

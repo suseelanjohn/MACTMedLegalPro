@@ -1,23 +1,28 @@
 package com.kamarajlaw.mactmedlegal.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.kamarajlaw.mactmedlegal.data.ClaimCategory
 import com.kamarajlaw.mactmedlegal.data.FullCaseBundle
 import com.kamarajlaw.mactmedlegal.domain.ValuationEngine
+import com.kamarajlaw.mactmedlegal.ui.theme.*
 import com.kamarajlaw.mactmedlegal.util.ClientActions
-import java.text.NumberFormat
-import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -28,62 +33,147 @@ fun CaseDirectoryScreen(
 ) {
     val context = LocalContext.current
     var query by remember { mutableStateOf("") }
-    val inr = remember { NumberFormat.getCurrencyInstance(Locale("en", "IN")).apply { maximumFractionDigits = 0 } }
+    var filterMode by remember { mutableStateOf("ALL") }
 
-    val filtered = remember(cases, query) {
-        if (query.isBlank()) cases
-        else cases.filter {
-            it.case.mcopNumber.contains(query, ignoreCase = true) ||
-            it.case.petitionerName.contains(query, ignoreCase = true) ||
-            it.case.clientPhone.contains(query, ignoreCase = true)
+    val analyzedCases = remember(cases) {
+        cases.map { it to ValuationEngine.analyze(it) }
+    }
+
+    val totalPortfolioProjB = remember(analyzedCases) { analyzedCases.sumOf { it.second.projectionB.grossTotal } }
+    val totalUnrecoveredSpend = remember(analyzedCases) { analyzedCases.sumOf { it.second.netUnrecoveredExpenses } }
+
+    val filtered = remember(analyzedCases, query, filterMode) {
+        analyzedCases.filter { (bundle, report) ->
+            val matchesQuery = query.isBlank() ||
+                bundle.case.mcopNumber.contains(query, ignoreCase = true) ||
+                bundle.case.petitionerName.contains(query, ignoreCase = true) ||
+                bundle.case.clientPhone.contains(query, ignoreCase = true) ||
+                bundle.case.tribunalName.contains(query, ignoreCase = true)
+
+            val matchesFilter = when (filterMode) {
+                "INJURY" -> bundle.case.claimCategory != ClaimCategory.FATAL_DEATH && bundle.case.claimCategory != ClaimCategory.SECTION_164_NO_FAULT
+                "FATAL" -> bundle.case.claimCategory == ClaimCategory.FATAL_DEATH
+                "STRONG" -> report.isStrong
+                "WEAK" -> !report.isStrong && !report.isModerate
+                else -> true
+            }
+            matchesQuery && matchesFilter
         }
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("MCOP Case Directory (${cases.size})", fontWeight = FontWeight.Bold) }
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = NavyPrimary,
+                    titleContentColor = Color.White
+                ),
+                title = {
+                    Column {
+                        Text("MACT MedLegal Pro", fontWeight = FontWeight.Bold)
+                        Text("MCOP Docket Directory • ${cases.size} Cases", style = MaterialTheme.typography.labelSmall, color = Color(0xFFCBD5E1))
+                    }
+                }
             )
         },
         floatingActionButton = {
             ExtendedFloatingActionButton(
                 onClick = onCreateNewCase,
+                containerColor = NavyPrimary,
+                contentColor = Color.White,
                 icon = { Icon(Icons.Default.Add, contentDescription = null) },
                 text = { Text("New MCOP Case") }
             )
         }
     ) { padding ->
-        Column(modifier = Modifier.padding(padding).fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .padding(padding)
+                .fillMaxSize()
+                .background(SlateBg)
+        ) {
+            // Office-Wide Portfolio KPI Strip
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(NavyPrimary)
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                KpiChip("Active Dockets", "${cases.size}", Modifier.weight(1f))
+                KpiChip("Proj. B Value", ClientActions.formatInr(totalPortfolioProjB), Modifier.weight(1.4f))
+                KpiChip("Due Expenses", ClientActions.formatInr(totalUnrecoveredSpend), Modifier.weight(1.2f))
+            }
+
+            // Search & Filter Bar
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                placeholder = { Text("Search MCOP No., Petitioner, or Phone...") },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                placeholder = { Text("Search MCOP No., Petitioner, Tribunal, or Phone...") },
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                shape = RoundedCornerShape(14.dp),
+                colors = OutlinedTextFieldDefaults.colors(unfocusedContainerColor = Color.White, focusedContainerColor = Color.White),
                 singleLine = true
             )
 
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf("ALL" to "All (${cases.size})", "INJURY" to "Injury", "FATAL" to "Fatal / Death", "STRONG" to "Strong 75+", "WEAK" to "Weak (<50)")
+                    .forEach { (key, label) ->
+                        FilterChip(
+                            selected = filterMode == key,
+                            onClick = { filterMode = key },
+                            label = { Text(label) }
+                        )
+                    }
+            }
+
             if (filtered.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
-                        Text("No MCOP cases added yet", style = MaterialTheme.typography.titleMedium)
-                        Spacer(Modifier.height(6.dp))
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(28.dp)) {
+                        Icon(Icons.Default.Gavel, contentDescription = null, modifier = Modifier.size(48.dp), tint = NavyPrimary)
+                        Spacer(Modifier.height(10.dp))
+                        Text("No MCOP Dockets Found", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(4.dp))
                         Text(
-                            "Tap '+ New MCOP Case' to register a petition, score merits, and track expenses.",
+                            "Tap '+ New MCOP Case' to register a claim, score evidence, plot injuries/spot mahazar, and calculate dual projections.",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = TextSecondary
                         )
                     }
                 }
             } else {
                 LazyColumn(
-                    contentPadding = PaddingValues(16.dp),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 88.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    items(filtered, key = { it.case.id }) { bundle ->
-                        val report = remember(bundle) { ValuationEngine.analyze(bundle) }
+                    items(filtered, key = { it.first.case.id }) { (bundle, report) ->
+                        val badgeBg = when {
+                            report.isStrong -> TealContainer
+                            report.isModerate -> AmberContainer
+                            else -> CrimsonContainer
+                        }
+                        val badgeText = when {
+                            report.isStrong -> Color(0xFF065F46)
+                            report.isModerate -> Color(0xFF92400E)
+                            else -> CrimsonDanger
+                        }
+
                         Card(
-                            modifier = Modifier.fillMaxWidth().clickable { onOpenCase(bundle.case.id) }
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = CardWhite),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onOpenCase(bundle.case.id) }
                         ) {
                             Column(modifier = Modifier.padding(16.dp)) {
                                 Row(
@@ -91,42 +181,67 @@ fun CaseDirectoryScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(bundle.case.mcopNumber, fontWeight = FontWeight.Bold)
-                                    AssistChip(
-                                        onClick = { onOpenCase(bundle.case.id) },
-                                        label = { Text("Score ${report.totalScore}/100") }
-                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(bundle.case.mcopNumber, fontWeight = FontWeight.Bold, color = NavyPrimary)
+                                        Text(bundle.case.tribunalName, style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+                                    }
+                                    Surface(color = badgeBg, shape = RoundedCornerShape(8.dp)) {
+                                        Text(
+                                            "Score ${report.totalScore}/100",
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = badgeText
+                                        )
+                                    }
                                 }
+
+                                Spacer(Modifier.height(6.dp))
                                 Text(
                                     "${bundle.case.petitionerName} • Age ${bundle.case.age} • ${bundle.case.occupation}",
-                                    style = MaterialTheme.typography.bodyMedium
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium
                                 )
                                 Text(
                                     report.fitnessVerdict,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.primary
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = badgeText
                                 )
-                                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+                                HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp), color = SlateBorder)
+
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column {
-                                        Text("Proj B Target: ${inr.format(report.projectionB.grossTotal)}", fontWeight = FontWeight.SemiBold)
                                         Text(
-                                            "Client Phone: ${bundle.case.clientPhone.ifBlank { "Not added" }}",
-                                            style = MaterialTheme.typography.bodySmall
+                                            "Proj. A: ${ClientActions.formatInr(report.projectionA.grossTotal)}  |  Proj. B: ${ClientActions.formatInr(report.projectionB.grossTotal)}",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = NavyPrimary
+                                        )
+                                        Text(
+                                            "Phone: ${bundle.case.clientPhone.ifBlank { "Not added" }}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = TextSecondary
                                         )
                                     }
                                     Row {
                                         IconButton(onClick = { ClientActions.dialClient(context, bundle.case.clientPhone) }) {
-                                            Icon(Icons.Default.Call, contentDescription = "Call Client")
+                                            Icon(Icons.Default.Call, contentDescription = "Call", tint = NavyPrimary)
                                         }
                                         IconButton(onClick = {
                                             ClientActions.openWhatsApp(context, bundle.case.clientPhone, bundle.case.mcopNumber, bundle.case.petitionerName)
                                         }) {
-                                            Icon(Icons.Default.Chat, contentDescription = "WhatsApp Client")
+                                            Icon(Icons.Default.Chat, contentDescription = "WhatsApp", tint = TealAccent)
+                                        }
+                                        IconButton(onClick = {
+                                            ClientActions.copyText(context, "Phone", bundle.case.clientPhone)
+                                        }) {
+                                            Icon(Icons.Default.ContentCopy, contentDescription = "Copy Phone", tint = TextSecondary)
                                         }
                                     }
                                 }
@@ -135,6 +250,20 @@ fun CaseDirectoryScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun KpiChip(label: String, value: String, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier,
+        color = Color.White.copy(alpha = 0.12f),
+        shape = RoundedCornerShape(10.dp)
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+            Text(label, style = MaterialTheme.typography.labelSmall, color = Color(0xFFCBD5E1))
+            Text(value, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1)
         }
     }
 }

@@ -1,83 +1,223 @@
 package com.kamarajlaw.mactmedlegal.ui
 
+import android.graphics.Paint
+import android.graphics.Typeface
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.*
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import com.kamarajlaw.mactmedlegal.data.InjuryPinEntity
 import com.kamarajlaw.mactmedlegal.data.SceneItemEntity
+import kotlin.math.hypot
+
+fun inferAnatomicalRegion(nx: Float, ny: Float, isPosterior: Boolean): String {
+    val side = if (nx < 0.45f) "Right" else if (nx > 0.55f) "Left" else "Midline"
+    return when {
+        ny < 0.16f -> if (isPosterior) "Occipital Cranium" else "Cranium / Facial"
+        ny < 0.21f -> if (isPosterior) "Cervical Spine (C1-C7)" else "Neck / Clavicle"
+        ny < 0.38f -> when {
+            nx < 0.33f || nx > 0.67f -> "$side Upper Arm / Shoulder"
+            isPosterior -> "Thoracic Spine / Scapula"
+            else -> "$side Thorax / Ribs"
+        }
+        ny < 0.52f -> when {
+            nx < 0.30f || nx > 0.70f -> "$side Forearm / Wrist"
+            isPosterior -> "Lumbar Spine (L1-L5)"
+            else -> "Abdomen / Pelvis"
+        }
+        ny < 0.72f -> "$side Femur / Thigh"
+        ny < 0.90f -> "$side Tibia-Fibula / Knee"
+        else -> "$side Ankle / Foot"
+    }
+}
 
 @Composable
 fun AnatomicalBodyCanvas(
     pins: List<InjuryPinEntity>,
     isPosterior: Boolean,
-    onAddPin: (normX: Float, normY: Float) -> Unit,
+    selectedPinId: Long?,
+    onAddPin: (normX: Float, normY: Float, regionName: String) -> Unit,
     onSelectPin: (InjuryPinEntity) -> Unit
 ) {
-    val visiblePins = pins.filter { it.isPosterior == isPosterior }
+    val visiblePins = remember(pins, isPosterior) { pins.filter { it.isPosterior == isPosterior } }
 
     Canvas(
         modifier = Modifier
             .fillMaxWidth()
-            .height(320.dp)
-            .background(Color(0xFFF8FAFC), RoundedCornerShape(16.dp))
+            .height(350.dp)
+            .clip(RoundedCornerShape(20.dp))
+            .background(Color(0xFFF8FAFC))
+            .border(1.dp, Color(0xFFCBD5E1), RoundedCornerShape(20.dp))
             .pointerInput(isPosterior, visiblePins) {
                 detectTapGestures { offset ->
-                    val nx = (offset.x / size.width).coerceIn(0f, 1f)
-                    val ny = (offset.y / size.height).coerceIn(0f, 1f)
+                    val nx = (offset.x / size.width).coerceIn(0.15f, 0.85f)
+                    val ny = (offset.y / size.height).coerceIn(0.05f, 0.95f)
                     val hit = visiblePins.minByOrNull {
-                        val dx = (it.normX - nx) * size.width
-                        val dy = (it.normY - ny) * size.height
-                        dx * dx + dy * dy
+                        hypot((it.normX - nx) * size.width, (it.normY - ny) * size.height)
                     }
-                    if (hit != null) {
-                        val dx = (hit.normX - nx) * size.width
-                        val dy = (hit.normY - ny) * size.height
-                        if (dx * dx + dy * dy <= 36f * 36f) {
-                            onSelectPin(hit)
-                            return@detectTapGestures
-                        }
+                    if (hit != null && hypot((hit.normX - nx) * size.width, (hit.normY - ny) * size.height) <= 44f) {
+                        onSelectPin(hit)
+                    } else {
+                        onAddPin(nx, ny, inferAnatomicalRegion(nx, ny, isPosterior))
                     }
-                    onAddPin(nx, ny)
                 }
             }
     ) {
-        val cx = size.width / 2f
-        val bodyColor = Color(0xFFCBD5E1)
+        val w = size.width
+        val h = size.height
+        val cx = w / 2f
 
-        drawCircle(color = bodyColor, radius = size.minDimension * 0.08f, center = Offset(cx, size.height * 0.12f))
-        drawRoundRect(
-            color = bodyColor,
-            topLeft = Offset(cx - size.width * 0.13f, size.height * 0.22f),
-            size = Size(size.width * 0.26f, size.height * 0.32f),
-            cornerRadius = CornerRadius(24f, 24f)
+        // Subtle anatomical clinical grid
+        val gridPaint = Color(0xFFE2E8F0)
+        for (i in 1..9) {
+            drawLine(gridPaint, Offset(0f, h * i / 10f), Offset(w, h * i / 10f), strokeWidth = 1f)
+            drawLine(gridPaint, Offset(w * i / 10f, 0f), Offset(w * i / 10f, h), strokeWidth = 1f)
+        }
+        drawLine(
+            color = Color(0xFF94A3B8),
+            start = Offset(cx, h * 0.04f),
+            end = Offset(cx, h * 0.96f),
+            strokeWidth = 2f,
+            pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 10f), 0f)
         )
-        drawRoundRect(color = bodyColor, topLeft = Offset(cx - size.width * 0.22f, size.height * 0.24f), size = Size(size.width * 0.07f, size.height * 0.28f))
-        drawRoundRect(color = bodyColor, topLeft = Offset(cx + size.width * 0.15f, size.height * 0.24f), size = Size(size.width * 0.07f, size.height * 0.28f))
-        drawRoundRect(color = bodyColor, topLeft = Offset(cx - size.width * 0.11f, size.height * 0.56f), size = Size(size.width * 0.09f, size.height * 0.36f))
-        drawRoundRect(color = bodyColor, topLeft = Offset(cx + size.width * 0.02f, size.height * 0.56f), size = Size(size.width * 0.09f, size.height * 0.36f))
 
-        visiblePins.forEach { pin ->
+        val skinFill = Color(0xFFE2E8F0)
+        val skinStroke = Color(0xFF64748B)
+
+        // Head
+        drawCircle(color = skinFill, radius = h * 0.062f, center = Offset(cx, h * 0.105f))
+        drawCircle(color = skinStroke, radius = h * 0.062f, center = Offset(cx, h * 0.105f), style = Stroke(2.5f))
+
+        // Neck
+        drawRect(color = skinFill, topLeft = Offset(cx - w * 0.032f, h * 0.162f), size = Size(w * 0.064f, h * 0.042f))
+
+        // Torso & Pelvis Path
+        val torso = Path().apply {
+            moveTo(cx - w * 0.135f, h * 0.205f)
+            lineTo(cx + w * 0.135f, h * 0.205f)
+            lineTo(cx + w * 0.105f, h * 0.37f)
+            lineTo(cx + w * 0.12f, h * 0.49f)
+            lineTo(cx - w * 0.12f, h * 0.49f)
+            lineTo(cx - w * 0.105f, h * 0.37f)
+            close()
+        }
+        drawPath(torso, color = skinFill)
+        drawPath(torso, color = skinStroke, style = Stroke(2.5f))
+
+        // Spine or Ribcage Detail
+        if (isPosterior) {
+            for (v in 0..11) {
+                val vy = h * (0.21f + v * 0.022f)
+                drawRoundRect(
+                    color = Color(0xFF94A3B8),
+                    topLeft = Offset(cx - 7f, vy),
+                    size = Size(14f, 6f),
+                    cornerRadius = CornerRadius(3f, 3f)
+                )
+            }
+        } else {
+            for (r in 0..4) {
+                val ry = h * (0.24f + r * 0.024f)
+                drawLine(Color(0xFF94A3B8), Offset(cx - w * 0.08f, ry), Offset(cx - 6f, ry + 5f), 2f)
+                drawLine(Color(0xFF94A3B8), Offset(cx + w * 0.08f, ry), Offset(cx + 6f, ry + 5f), 2f)
+            }
+        }
+
+        // Left & Right Arms
+        val leftArm = Path().apply {
+            moveTo(cx - w * 0.135f, h * 0.21f)
+            lineTo(cx - w * 0.22f, h * 0.36f)
+            lineTo(cx - w * 0.25f, h * 0.51f)
+            lineTo(cx - w * 0.20f, h * 0.52f)
+            lineTo(cx - w * 0.165f, h * 0.37f)
+            lineTo(cx - w * 0.125f, h * 0.27f)
+            close()
+        }
+        val rightArm = Path().apply {
+            moveTo(cx + w * 0.135f, h * 0.21f)
+            lineTo(cx + w * 0.22f, h * 0.36f)
+            lineTo(cx + w * 0.25f, h * 0.51f)
+            lineTo(cx + w * 0.20f, h * 0.52f)
+            lineTo(cx + w * 0.165f, h * 0.37f)
+            lineTo(cx + w * 0.125f, h * 0.27f)
+            close()
+        }
+        drawPath(leftArm, skinFill); drawPath(leftArm, skinStroke, style = Stroke(2.5f))
+        drawPath(rightArm, skinFill); drawPath(rightArm, skinStroke, style = Stroke(2.5f))
+
+        // Left & Right Legs
+        val leftLeg = Path().apply {
+            moveTo(cx - w * 0.115f, h * 0.49f)
+            lineTo(cx - w * 0.015f, h * 0.49f)
+            lineTo(cx - w * 0.03f, h * 0.72f)
+            lineTo(cx - w * 0.04f, h * 0.93f)
+            lineTo(cx - w * 0.10f, h * 0.93f)
+            lineTo(cx - w * 0.095f, h * 0.72f)
+            close()
+        }
+        val rightLeg = Path().apply {
+            moveTo(cx + w * 0.015f, h * 0.49f)
+            lineTo(cx + w * 0.115f, h * 0.49f)
+            lineTo(cx + w * 0.095f, h * 0.72f)
+            lineTo(cx + w * 0.10f, h * 0.93f)
+            lineTo(cx + w * 0.04f, h * 0.93f)
+            lineTo(cx + w * 0.03f, h * 0.72f)
+            close()
+        }
+        drawPath(leftLeg, skinFill); drawPath(leftLeg, skinStroke, style = Stroke(2.5f))
+        drawPath(rightLeg, skinFill); drawPath(rightLeg, skinStroke, style = Stroke(2.5f))
+
+        // L/R Labels & Numbered Trauma Pins
+        val textPaint = Paint().apply {
+            color = android.graphics.Color.WHITE
+            textSize = 26f
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.DEFAULT_BOLD
+            isAntiAlias = true
+        }
+        val sidePaint = Paint().apply {
+            color = android.graphics.Color.parseColor("#64748B")
+            textSize = 24f
+            typeface = Typeface.DEFAULT_BOLD
+            isAntiAlias = true
+        }
+
+        drawIntoCanvas { c ->
+            c.nativeCanvas.drawText(if (isPosterior) "LEFT" else "RIGHT", 24f, 36f, sidePaint)
+            c.nativeCanvas.drawText(if (isPosterior) "RIGHT" else "LEFT", w - 95f, 36f, sidePaint)
+        }
+
+        visiblePins.forEachIndexed { idx, pin ->
             val pinColor = when (pin.severity) {
                 "GRIEVOUS" -> Color(0xFFDC2626)
                 "NERVE" -> Color(0xFF7C3AED)
                 else -> Color(0xFFD97706)
             }
-            val pos = Offset(pin.normX * size.width, pin.normY * size.height)
-            drawCircle(color = pinColor.copy(alpha = 0.25f), radius = 24f, center = pos)
-            drawCircle(color = pinColor, radius = 12f, center = pos)
+            val pos = Offset(pin.normX * w, pin.normY * h)
+            val isSelected = pin.id == selectedPinId
+            drawCircle(color = pinColor.copy(alpha = if (isSelected) 0.35f else 0.20f), radius = if (isSelected) 34f else 24f, center = pos)
+            if (isSelected) {
+                drawCircle(color = pinColor, radius = 24f, center = pos, style = Stroke(3f))
+            }
+            drawCircle(color = pinColor, radius = 16f, center = pos)
+            drawIntoCanvas { c ->
+                c.nativeCanvas.drawText("${idx + 1}", pos.x, pos.y + 9f, textPaint)
+            }
         }
     }
 }
@@ -86,28 +226,37 @@ fun AnatomicalBodyCanvas(
 fun AccidentSceneCanvas(
     roadLayout: String,
     items: List<SceneItemEntity>,
+    selectedItemId: Long?,
+    onSelectItem: (SceneItemEntity) -> Unit,
     onMoveItem: (SceneItemEntity, Float, Float) -> Unit
 ) {
     Canvas(
         modifier = Modifier
             .fillMaxWidth()
-            .height(280.dp)
-            .background(Color(0xFFE2E8F0), RoundedCornerShape(16.dp))
+            .height(290.dp)
+            .clip(RoundedCornerShape(20.dp))
+            .background(Color(0xFFDCFCE7)) // Roadside Verge
+            .border(1.dp, Color(0xFF94A3B8), RoundedCornerShape(20.dp))
+            .pointerInput(items) {
+                detectTapGestures { tap ->
+                    val hit = items.minByOrNull { hypot(it.normX * size.width - tap.x, it.normY * size.height - tap.y) }
+                    if (hit != null && hypot(hit.normX * size.width - tap.x, hit.normY * size.height - tap.y) <= 55f) {
+                        onSelectItem(hit)
+                    }
+                }
+            }
             .pointerInput(items) {
                 var dragged: SceneItemEntity? = null
                 detectDragGestures(
                     onDragStart = { start ->
-                        dragged = items.minByOrNull {
-                            val dx = it.normX * size.width - start.x
-                            val dy = it.normY * size.height - start.y
-                            dx * dx + dy * dy
-                        }
+                        dragged = items.minByOrNull { hypot(it.normX * size.width - start.x, it.normY * size.height - start.y) }
+                        dragged?.let(onSelectItem)
                     },
                     onDrag = { change, dragAmount ->
                         change.consume()
                         dragged?.let { item ->
-                            val nx = ((item.normX * size.width + dragAmount.x) / size.width).coerceIn(0.05f, 0.95f)
-                            val ny = ((item.normY * size.height + dragAmount.y) / size.height).coerceIn(0.05f, 0.95f)
+                            val nx = ((item.normX * size.width + dragAmount.x) / size.width).coerceIn(0.06f, 0.94f)
+                            val ny = ((item.normY * size.height + dragAmount.y) / size.height).coerceIn(0.08f, 0.92f)
                             onMoveItem(item, nx, ny)
                             dragged = item.copy(normX = nx, normY = ny)
                         }
@@ -115,40 +264,69 @@ fun AccidentSceneCanvas(
                 )
             }
     ) {
-        val roadColor = Color(0xFF334155)
-        val dash = PathEffect.dashPathEffect(floatArrayOf(24f, 18f), 0f)
+        val w = size.width
+        val h = size.height
+        val asphalt = Color(0xFF334155)
+        val dash = PathEffect.dashPathEffect(floatArrayOf(22f, 16f), 0f)
 
-        drawRect(
-            color = roadColor,
-            topLeft = Offset(0f, size.height * 0.30f),
-            size = Size(size.width, size.height * 0.40f)
-        )
-        if (roadLayout == "CROSSROADS" || roadLayout == "T_JUNCTION") {
-            val topY = if (roadLayout == "T_JUNCTION") size.height * 0.30f else 0f
-            val h = if (roadLayout == "T_JUNCTION") size.height * 0.70f else size.height
-            drawRect(
-                color = roadColor,
-                topLeft = Offset(size.width * 0.35f, topY),
-                size = Size(size.width * 0.30f, h)
-            )
+        // Main Horizontal Highway
+        drawRect(color = asphalt, topLeft = Offset(0f, h * 0.28f), size = Size(w, h * 0.44f))
+        drawLine(Color(0xFFFACC15), Offset(0f, h * 0.29f), Offset(w, h * 0.29f), 3f)
+        drawLine(Color(0xFFFACC15), Offset(0f, h * 0.71f), Offset(w, h * 0.71f), 3f)
+
+        if (roadLayout == "FOUR_LANE") {
+            drawRect(color = Color(0xFF16A34A), topLeft = Offset(0f, h * 0.485f), size = Size(w, h * 0.03f))
+            drawLine(Color.White, Offset(0f, h * 0.39f), Offset(w, h * 0.39f), 2.5f, dash)
+            drawLine(Color.White, Offset(0f, h * 0.61f), Offset(w, h * 0.61f), 2.5f, dash)
+        } else {
+            drawLine(Color.White, Offset(0f, h * 0.50f), Offset(w, h * 0.50f), 3.5f, dash)
         }
-        drawLine(
-            color = Color.White,
-            start = Offset(0f, size.height * 0.50f),
-            end = Offset(size.width, size.height * 0.50f),
-            strokeWidth = 4f,
-            pathEffect = dash
-        )
+
+        if (roadLayout == "CROSSROADS" || roadLayout == "T_JUNCTION") {
+            val topY = if (roadLayout == "T_JUNCTION") h * 0.50f else 0f
+            val roadH = if (roadLayout == "T_JUNCTION") h * 0.50f else h
+            drawRect(color = asphalt, topLeft = Offset(w * 0.36f, topY), size = Size(w * 0.28f, roadH))
+            drawLine(Color.White, Offset(w * 0.50f, topY), Offset(w * 0.50f, topY + roadH), 3f, dash)
+        }
+
+        val labelPaint = Paint().apply {
+            color = android.graphics.Color.WHITE
+            textSize = 21f
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.DEFAULT_BOLD
+            isAntiAlias = true
+        }
 
         items.forEach { item ->
-            val pos = Offset(item.normX * size.width, item.normY * size.height)
+            val pos = Offset(item.normX * w, item.normY * h)
+            val isSel = item.id == selectedItemId
             rotate(degrees = item.rotationDeg, pivot = pos) {
                 when (item.itemType) {
-                    "IMPACT_X" -> drawCircle(color = Color(0xFFEF4444), radius = 16f, center = pos)
-                    "LORRY" -> drawRoundRect(color = Color(0xFFF59E0B), topLeft = Offset(pos.x - 38f, pos.y - 16f), size = Size(76f, 32f))
-                    "BIKE" -> drawRoundRect(color = Color(0xFF38BDF8), topLeft = Offset(pos.x - 20f, pos.y - 8f), size = Size(40f, 16f))
-                    else -> drawRoundRect(color = Color(0xFF10B981), topLeft = Offset(pos.x - 28f, pos.y - 14f), size = Size(56f, 28f))
+                    "IMPACT_X" -> {
+                        drawCircle(Color(0xFFEF4444).copy(alpha = 0.28f), 28f, pos)
+                        drawCircle(Color(0xFFDC2626), 17f, pos)
+                    }
+                    "SKID" -> {
+                        drawLine(Color(0xFF0F172A), Offset(pos.x - 36f, pos.y - 5f), Offset(pos.x + 36f, pos.y - 5f), 4f, dash)
+                        drawLine(Color(0xFF0F172A), Offset(pos.x - 36f, pos.y + 5f), Offset(pos.x + 36f, pos.y + 5f), 4f, dash)
+                    }
+                    "LORRY" -> {
+                        drawRoundRect(Color(0xFFF59E0B), Offset(pos.x - 42f, pos.y - 18f), Size(84f, 36f), CornerRadius(6f, 6f))
+                        drawRect(Color(0xFFB45309), Offset(pos.x + 22f, pos.y - 16f), Size(18f, 32f))
+                    }
+                    "BIKE" -> {
+                        drawRoundRect(Color(0xFF0284C7), Offset(pos.x - 22f, pos.y - 9f), Size(44f, 18f), CornerRadius(8f, 8f))
+                    }
+                    else -> {
+                        drawRoundRect(Color(0xFF10B981), Offset(pos.x - 32f, pos.y - 15f), Size(64f, 30f), CornerRadius(8f, 8f))
+                    }
                 }
+                if (isSel) {
+                    drawCircle(Color.White, 26f, pos, style = Stroke(2.5f))
+                }
+            }
+            drawIntoCanvas { c ->
+                c.nativeCanvas.drawText(item.label, pos.x, pos.y - 24f, labelPaint)
             }
         }
     }
