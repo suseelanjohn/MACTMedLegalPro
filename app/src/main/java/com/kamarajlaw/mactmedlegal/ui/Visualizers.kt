@@ -271,22 +271,22 @@ fun AccidentSceneCanvas(
 
         // Main Horizontal Highway
         drawRect(color = asphalt, topLeft = Offset(0f, h * 0.28f), size = Size(w, h * 0.44f))
-        drawLine(Color(0xFFFACC15), Offset(0f, h * 0.29f), Offset(w, h * 0.29f), 3f)
-        drawLine(Color(0xFFFACC15), Offset(0f, h * 0.71f), Offset(w, h * 0.71f), 3f)
+        drawLine(Color(0xFFFACC15), Offset(0f, h * 0.29f), Offset(w, h * 0.29f), strokeWidth = 3f)
+        drawLine(Color(0xFFFACC15), Offset(0f, h * 0.71f), Offset(w, h * 0.71f), strokeWidth = 3f)
 
         if (roadLayout == "FOUR_LANE") {
             drawRect(color = Color(0xFF16A34A), topLeft = Offset(0f, h * 0.485f), size = Size(w, h * 0.03f))
-            drawLine(Color.White, Offset(0f, h * 0.39f), Offset(w, h * 0.39f), 2.5f, dash)
-            drawLine(Color.White, Offset(0f, h * 0.61f), Offset(w, h * 0.61f), 2.5f, dash)
+            drawLine(Color.White, Offset(0f, h * 0.39f), Offset(w, h * 0.39f), strokeWidth = 2.5f, pathEffect = dash)
+            drawLine(Color.White, Offset(0f, h * 0.61f), Offset(w, h * 0.61f), strokeWidth = 2.5f, pathEffect = dash)
         } else {
-            drawLine(Color.White, Offset(0f, h * 0.50f), Offset(w, h * 0.50f), 3.5f, dash)
+            drawLine(Color.White, Offset(0f, h * 0.50f), Offset(w, h * 0.50f), strokeWidth = 3.5f, pathEffect = dash)
         }
 
         if (roadLayout == "CROSSROADS" || roadLayout == "T_JUNCTION") {
             val topY = if (roadLayout == "T_JUNCTION") h * 0.50f else 0f
             val roadH = if (roadLayout == "T_JUNCTION") h * 0.50f else h
             drawRect(color = asphalt, topLeft = Offset(w * 0.36f, topY), size = Size(w * 0.28f, roadH))
-            drawLine(Color.White, Offset(w * 0.50f, topY), Offset(w * 0.50f, topY + roadH), 3f, dash)
+            drawLine(Color.White, Offset(w * 0.50f, topY), Offset(w * 0.50f, topY + roadH), strokeWidth = 3f, pathEffect = dash)
         }
 
         val labelPaint = Paint().apply {
@@ -307,8 +307,8 @@ fun AccidentSceneCanvas(
                         drawCircle(Color(0xFFDC2626), 17f, pos)
                     }
                     "SKID" -> {
-                        drawLine(Color(0xFF0F172A), Offset(pos.x - 36f, pos.y - 5f), Offset(pos.x + 36f, pos.y - 5f), 4f, dash)
-                        drawLine(Color(0xFF0F172A), Offset(pos.x - 36f, pos.y + 5f), Offset(pos.x + 36f, pos.y + 5f), 4f, dash)
+                        drawLine(Color(0xFF0F172A), Offset(pos.x - 36f, pos.y - 5f), Offset(pos.x + 36f, pos.y - 5f), strokeWidth = 4f, pathEffect = dash)
+                        drawLine(Color(0xFF0F172A), Offset(pos.x - 36f, pos.y + 5f), Offset(pos.x + 36f, pos.y + 5f), strokeWidth = 4f, pathEffect = dash)
                     }
                     "LORRY" -> {
                         drawRoundRect(Color(0xFFF59E0B), Offset(pos.x - 42f, pos.y - 18f), Size(84f, 36f), CornerRadius(6f, 6f))
