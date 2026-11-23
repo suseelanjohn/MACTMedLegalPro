@@ -12,7 +12,7 @@ import androidx.compose.ui.unit.dp
 import com.kamarajlaw.mactmedlegal.data.CaseEntity
 import com.kamarajlaw.mactmedlegal.data.ClaimCategory
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun CaseIntakeOrEditDialog(
     existingCase: CaseEntity? = null,
