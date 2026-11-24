@@ -6,6 +6,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
 val NavyPrimary = Color(0xFF0F2942)
+val NavyDark = Color(0xFF091A2B)
 val NavyContainer = Color(0xFFD6E4F0)
 val TealAccent = Color(0xFF0D9488)
 val TealContainer = Color(0xFFCCFBF1)

@@ -5,6 +5,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,6 +25,7 @@ import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
 import com.kamarajlaw.mactmedlegal.data.*
+import com.kamarajlaw.mactmedlegal.domain.CaseAnalysisReport
 import com.kamarajlaw.mactmedlegal.domain.ValuationEngine
 import com.kamarajlaw.mactmedlegal.ui.theme.*
 import com.kamarajlaw.mactmedlegal.util.ClientActions
@@ -37,19 +39,23 @@ import java.io.FileOutputStream
 fun CaseWorkspaceScreen(
     bundle: FullCaseBundle,
     dao: McopDao,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onEditCaseFullPage: () -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val report = remember(bundle) { ValuationEngine.analyze(bundle) }
     var selectedTab by remember { mutableIntStateOf(0) }
-    var showEditDialog by remember { mutableStateOf(false) }
     val isFatal = bundle.case.claimCategory == ClaimCategory.FATAL_DEATH
 
-    // Scan tagging dialog state
-    var pendingScannedPath by remember { mutableStateOf<String?>(null) }
+    // Pending Document Tagging State (for both Scanned & Attached files)
+    var pendingFilePath by remember { mutableStateOf<String?>(null) }
+    var pendingDefaultTitle by remember { mutableStateOf("Scanned Court Exhibit") }
+    var pendingSourceType by remember { mutableStateOf("SCANNED") }
+    var pendingMimeType by remember { mutableStateOf("application/pdf") }
     var pendingPageCount by remember { mutableIntStateOf(1) }
 
+    // 1. ML Kit Camera Document Scanner
     val scannerLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult()
     ) { result ->
@@ -57,12 +63,31 @@ fun CaseWorkspaceScreen(
             val scanResult = GmsDocumentScanningResult.fromActivityResultIntent(result.data)
             scanResult?.pdf?.let { pdf ->
                 val dir = File(context.filesDir, "case_docs").apply { mkdirs() }
-                val dest = File(dir, "DOC_${bundle.case.id}_${System.currentTimeMillis()}.pdf")
+                val dest = File(dir, "SCAN_${bundle.case.id}_${System.currentTimeMillis()}.pdf")
                 context.contentResolver.openInputStream(pdf.uri)?.use { input ->
                     FileOutputStream(dest).use { output -> input.copyTo(output) }
                 }
-                pendingScannedPath = dest.absolutePath
+                pendingFilePath = dest.absolutePath
+                pendingDefaultTitle = "Scanned Exhibit (${pdf.pageCount}p)"
+                pendingSourceType = "SCANNED"
+                pendingMimeType = "application/pdf"
                 pendingPageCount = pdf.pageCount
+            }
+        }
+    }
+
+    // 2. Device Storage File Picker (Attach existing PDF / JPG / PNG)
+    val attachLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            val copied = ClientActions.copyUriToInternalCaseVault(context, bundle.case.id, uri)
+            if (copied != null) {
+                pendingFilePath = copied.first
+                pendingDefaultTitle = copied.second
+                pendingSourceType = "ATTACHED"
+                pendingMimeType = copied.third
+                pendingPageCount = 1
             }
         }
     }
@@ -81,135 +106,146 @@ fun CaseWorkspaceScreen(
             }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = NavyPrimary,
-                    titleContentColor = Color.White,
-                    navigationIconContentColor = Color.White,
-                    actionIconContentColor = Color.White
-                ),
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+    val navItems = listOf(
+        Triple("Analysis", Icons.Default.Analytics, 0),
+        Triple(if (isFatal) "Heirs" else "Injuries", if (isFatal) Icons.Default.AccountTree else Icons.Default.AccessibilityNew, 1),
+        Triple("Scene", Icons.Default.Map, 2),
+        Triple("Docs (${bundle.documents.size})", Icons.Default.FolderShared, 3),
+        Triple("Expenses", Icons.Default.AccountBalanceWallet, 4)
+    )
+
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val isTablet = maxWidth >= 720.dp
+
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = NavyPrimary,
+                        titleContentColor = Color.White,
+                        navigationIconContentColor = Color.White,
+                        actionIconContentColor = Color.White
+                    ),
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
+                    },
+                    title = {
+                        Column {
+                            Text(bundle.case.mcopNumber, fontWeight = FontWeight.Bold, maxLines = 1)
+                            Text(
+                                "${bundle.case.petitionerName} • ${bundle.case.clientPhone.ifBlank { "No Phone" }}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color(0xFFCBD5E1),
+                                maxLines = 1
+                            )
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = onEditCaseFullPage) {
+                            Icon(Icons.Default.Edit, contentDescription = "Edit Full Case Form")
+                        }
+                        IconButton(onClick = { ClientActions.dialClient(context, bundle.case.clientPhone) }) {
+                            Icon(Icons.Default.Call, contentDescription = "Call")
+                        }
+                        IconButton(onClick = {
+                            ClientActions.openWhatsApp(context, bundle.case.clientPhone, bundle.case.mcopNumber, bundle.case.petitionerName)
+                        }) {
+                            Icon(Icons.Default.Chat, contentDescription = "WhatsApp")
+                        }
+                        IconButton(onClick = { CourtPdfGenerator.generateAndShareBrief(context, bundle, report) }) {
+                            Icon(Icons.Default.PictureAsPdf, contentDescription = "Export Brief")
+                        }
                     }
-                },
-                title = {
-                    Column {
-                        Text(bundle.case.mcopNumber, fontWeight = FontWeight.Bold, maxLines = 1)
-                        Text(
-                            "${bundle.case.petitionerName} • ${bundle.case.clientPhone.ifBlank { "No Phone" }}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFFCBD5E1),
-                            maxLines = 1
+                )
+            },
+            bottomBar = {
+                if (!isTablet) {
+                    NavigationBar(containerColor = CardWhite) {
+                        navItems.forEach { (label, icon, index) ->
+                            NavigationBarItem(
+                                selected = selectedTab == index,
+                                onClick = { selectedTab = index },
+                                icon = { Icon(icon, null) },
+                                label = { Text(label) }
+                            )
+                        }
+                    }
+                }
+            }
+        ) { padding ->
+            Row(
+                modifier = Modifier
+                    .padding(padding)
+                    .fillMaxSize()
+                    .background(SlateBg)
+            ) {
+                if (isTablet) {
+                    NavigationRail(containerColor = CardWhite) {
+                        Spacer(Modifier.height(12.dp))
+                        navItems.forEach { (label, icon, index) ->
+                            NavigationRailItem(
+                                selected = selectedTab == index,
+                                onClick = { selectedTab = index },
+                                icon = { Icon(icon, null) },
+                                label = { Text(label) }
+                            )
+                        }
+                    }
+                }
+
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .verticalScroll(rememberScrollState())
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    when (selectedTab) {
+                        0 -> AnalysisTab(bundle = bundle, report = report, dao = dao, onEditFacts = onEditCaseFullPage)
+                        1 -> if (isFatal) HeirsTab(bundle = bundle, report = report, dao = dao) else InjuriesTab(bundle = bundle, report = report, dao = dao)
+                        2 -> SceneTab(bundle = bundle, dao = dao)
+                        3 -> DocsTab(
+                            bundle = bundle,
+                            dao = dao,
+                            onScanClick = { launchScanner() },
+                            onAttachClick = { attachLauncher.launch(arrayOf("application/pdf", "image/*")) }
                         )
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { showEditDialog = true }) {
-                        Icon(Icons.Default.Edit, contentDescription = "Edit Case")
-                    }
-                    IconButton(onClick = { ClientActions.dialClient(context, bundle.case.clientPhone) }) {
-                        Icon(Icons.Default.Call, contentDescription = "Call")
-                    }
-                    IconButton(onClick = {
-                        ClientActions.openWhatsApp(context, bundle.case.clientPhone, bundle.case.mcopNumber, bundle.case.petitionerName)
-                    }) {
-                        Icon(Icons.Default.Chat, contentDescription = "WhatsApp")
-                    }
-                    IconButton(onClick = { CourtPdfGenerator.generateAndShareBrief(context, bundle, report) }) {
-                        Icon(Icons.Default.PictureAsPdf, contentDescription = "Export Brief")
+                        4 -> ExpensesTab(bundle = bundle, report = report, dao = dao)
                     }
                 }
-            )
-        },
-        bottomBar = {
-            NavigationBar(containerColor = CardWhite) {
-                NavigationBarItem(
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    icon = { Icon(Icons.Default.Analytics, null) },
-                    label = { Text("Analysis") }
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    icon = { Icon(if (isFatal) Icons.Default.AccountTree else Icons.Default.AccessibilityNew, null) },
-                    label = { Text(if (isFatal) "Heirs" else "Injuries") }
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 2,
-                    onClick = { selectedTab = 2 },
-                    icon = { Icon(Icons.Default.Map, null) },
-                    label = { Text("Scene") }
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 3,
-                    onClick = { selectedTab = 3 },
-                    icon = { Icon(Icons.Default.FolderShared, null) },
-                    label = { Text("Docs (${bundle.documents.size})") }
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 4,
-                    onClick = { selectedTab = 4 },
-                    icon = { Icon(Icons.Default.AccountBalanceWallet, null) },
-                    label = { Text("Expenses") }
-                )
-            }
-        }
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .padding(padding)
-                .fillMaxSize()
-                .background(SlateBg)
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            when (selectedTab) {
-                0 -> AnalysisTab(bundle = bundle, report = report, dao = dao, onEditFacts = { showEditDialog = true })
-                1 -> if (isFatal) HeirsTab(bundle = bundle, report = report, dao = dao) else InjuriesTab(bundle = bundle, dao = dao)
-                2 -> SceneTab(bundle = bundle, dao = dao)
-                3 -> DocsTab(bundle = bundle, dao = dao, onScanClick = { launchScanner() })
-                4 -> ExpensesTab(bundle = bundle, report = report, dao = dao)
             }
         }
     }
 
-    if (showEditDialog) {
-        CaseIntakeOrEditDialog(
-            existingCase = bundle.case,
-            onDismiss = { showEditDialog = false },
-            onSave = { updated ->
-                scope.launch {
-                    dao.upsertCase(updated)
-                    showEditDialog = false
-                }
-            }
-        )
-    }
-
-    pendingScannedPath?.let { path ->
-        var docTitle by remember { mutableStateOf("Scanned Court Record") }
+    pendingFilePath?.let { path ->
+        var docTitle by remember { mutableStateOf(pendingDefaultTitle) }
         var exhibitTag by remember { mutableStateOf("Ex.P${bundle.documents.size + 1}") }
-        var isMedicalBill by remember { mutableStateOf(false) }
+        var docCategory by remember { mutableStateOf("COURT_RECORD") }
         var billAmtText by remember { mutableStateOf("") }
 
         AlertDialog(
-            onDismissRequest = { pendingScannedPath = null },
-            title = { Text("Tag Scanned Exhibit ($pendingPageCount Pages)", fontWeight = FontWeight.Bold) },
+            onDismissRequest = { pendingFilePath = null },
+            title = {
+                Text(
+                    if (pendingSourceType == "SCANNED") "Save Scanned Exhibit ($pendingPageCount p)" else "Save Attached Document",
+                    fontWeight = FontWeight.Bold
+                )
+            },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(value = exhibitTag, onValueChange = { exhibitTag = it }, label = { Text("Exhibit Number (e.g., Ex.P1 FIR / Ex.P8 Bill)") })
+                    OutlinedTextField(value = exhibitTag, onValueChange = { exhibitTag = it }, label = { Text("Exhibit Tag (Ex.P1 FIR / Ex.P8 Bill)") })
                     OutlinedTextField(value = docTitle, onValueChange = { docTitle = it }, label = { Text("Document Title") })
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = isMedicalBill, onCheckedChange = { isMedicalBill = it })
-                        Text("This is a Medical Bill Voucher (Sync to Valuation)")
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf("COURT_RECORD" to "Court", "MEDICAL_RECORD" to "Medical", "MEDICAL_BILL" to "Bill ₹")
+                            .forEach { (cat, lbl) ->
+                                FilterChip(selected = docCategory == cat, onClick = { docCategory = cat }, label = { Text(lbl) })
+                            }
                     }
-                    if (isMedicalBill) {
-                        OutlinedTextField(value = billAmtText, onValueChange = { billAmtText = it }, label = { Text("Verified Bill Amount (₹)") })
+                    if (docCategory == "MEDICAL_BILL") {
+                        OutlinedTextField(value = billAmtText, onValueChange = { billAmtText = it }, label = { Text("Verified Medical Bill Amount (₹)") })
                     }
                 }
             },
@@ -221,15 +257,17 @@ fun CaseWorkspaceScreen(
                                 caseId = bundle.case.id,
                                 title = docTitle.trim().ifBlank { "Exhibit" },
                                 exhibitNumber = exhibitTag.trim().ifBlank { "Ex.P${bundle.documents.size + 1}" },
-                                category = if (isMedicalBill) "MEDICAL_BILL" else "COURT_RECORD",
-                                billAmount = if (isMedicalBill) (billAmtText.toDoubleOrNull() ?: 0.0) else 0.0,
+                                category = docCategory,
+                                sourceType = pendingSourceType,
+                                mimeType = pendingMimeType,
+                                billAmount = if (docCategory == "MEDICAL_BILL") (billAmtText.toDoubleOrNull() ?: 0.0) else 0.0,
                                 localFilePath = path,
                                 pageCount = pendingPageCount
                             )
                         )
-                        pendingScannedPath = null
+                        pendingFilePath = null
                     }
-                }) { Text("Save to Vault") }
+                }) { Text("Save Under Case") }
             }
         )
     }
@@ -238,22 +276,21 @@ fun CaseWorkspaceScreen(
 @Composable
 private fun AnalysisTab(
     bundle: FullCaseBundle,
-    report: com.kamarajlaw.mactmedlegal.domain.CaseAnalysisReport,
+    report: CaseAnalysisReport,
     dao: McopDao,
     onEditFacts: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
     val c = bundle.case
 
-    // 1. 100-Point Score Map & Merits Card
     Card(colors = CardDefaults.cardColors(containerColor = CardWhite), shape = RoundedCornerShape(16.dp)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Column {
+                Column(Modifier.weight(1f)) {
                     Text("100-Point Evidence Score Map", fontWeight = FontWeight.Bold, color = NavyPrimary)
                     Text(report.fitnessVerdict, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = TealAccent)
                 }
-                OutlinedButton(onClick = onEditFacts) { Text("Edit Facts") }
+                OutlinedButton(onClick = onEditFacts) { Text("Edit Case") }
             }
 
             ScoreBar("Liability & FIR Strength", report.liabilityScore, 30)
@@ -263,7 +300,6 @@ private fun AnalysisTab(
         }
     }
 
-    // 2. Anticipated Insurer Defences
     Card(colors = CardDefaults.cardColors(containerColor = CardWhite), shape = RoundedCornerShape(16.dp)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Anticipated Insurer Defences (${report.defences.size})", fontWeight = FontWeight.Bold, color = NavyPrimary)
@@ -283,7 +319,6 @@ private fun AnalysisTab(
         }
     }
 
-    // 3. Projection A — Strict Tribunal Statutory Projection + Sec. 171 Interest Toggle
     Card(colors = CardDefaults.cardColors(containerColor = CardWhite), shape = RoundedCornerShape(16.dp)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -308,7 +343,9 @@ private fun AnalysisTab(
                 LedgerRow("Consortium + Estate + Funeral", report.projectionA.conventionalHeads)
             } else {
                 LedgerRow("Pain & Suffering", report.projectionA.painAndSuffering)
-                LedgerRow("Treatment Loss (${c.treatmentMonths}m) + Attendant", report.projectionA.lossOfIncomeDuringTreatment + report.projectionA.attendantAndNourishment)
+                LedgerRow("Loss of Income During Treatment (${c.treatmentMonths}m)", report.projectionA.lossOfIncomeDuringTreatment)
+                LedgerRow("Attendant & Extra Nourishment", report.projectionA.attendantAndNourishment)
+                LedgerRow("Transport, Damage & Future Medical", report.projectionA.transportAndFutureMedical)
             }
             HorizontalDivider(color = SlateBorder)
             LedgerRow("Tribunal Principal Award", report.projectionA.principalAward, bold = true)
@@ -317,7 +354,6 @@ private fun AnalysisTab(
         }
     }
 
-    // 4. Projection B — Expense-Absorbing Target Projection
     Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFF0FDFA)), shape = RoundedCornerShape(16.dp)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("Projection B — Expense-Absorbing Target", fontWeight = FontWeight.Bold, color = Color(0xFF065F46))
@@ -338,7 +374,6 @@ private fun AnalysisTab(
         }
     }
 
-    // 5. Advocate Fee & Client Collection Box
     var feeInputText by remember(c.id, c.professionalFeeValue) { mutableStateOf(c.professionalFeeValue.toInt().toString()) }
     Card(colors = CardDefaults.cardColors(containerColor = NavyPrimary), shape = RoundedCornerShape(16.dp)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -375,12 +410,14 @@ private fun AnalysisTab(
 }
 
 @Composable
-private fun InjuriesTab(bundle: FullCaseBundle, dao: McopDao) {
+private fun InjuriesTab(bundle: FullCaseBundle, report: CaseAnalysisReport, dao: McopDao) {
     val scope = rememberCoroutineScope()
+    val c = bundle.case
     var isPosterior by remember { mutableStateOf(false) }
     var selectedPin by remember { mutableStateOf<InjuryPinEntity?>(null) }
     var pendingTap by remember { mutableStateOf<Triple<Float, Float, String>?>(null) }
 
+    // 1. Interactive 2D Anatomical Body Mapper
     Card(colors = CardDefaults.cardColors(containerColor = CardWhite), shape = RoundedCornerShape(16.dp)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -390,7 +427,7 @@ private fun InjuriesTab(bundle: FullCaseBundle, dao: McopDao) {
                     FilterChip(selected = isPosterior, onClick = { isPosterior = true }, label = { Text("Posterior") })
                 }
             }
-            Text("Tap anywhere on the body diagram to pin a fracture, laceration, or nerve injury.", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+            Text("Tap body to pin an injury and assign its disability %.", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
 
             AnatomicalBodyCanvas(
                 pins = bundle.injuries,
@@ -402,12 +439,14 @@ private fun InjuriesTab(bundle: FullCaseBundle, dao: McopDao) {
         }
     }
 
+    // 2. Pinned Injuries List with Per-Pin Disability
     bundle.injuries.forEachIndexed { idx, pin ->
         Card(colors = CardDefaults.cardColors(containerColor = CardWhite), shape = RoundedCornerShape(14.dp)) {
             Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("#${idx + 1} [${pin.exhibitTag}] ${pin.regionName} (${if (pin.isPosterior) "Back" else "Front"})", fontWeight = FontWeight.Bold)
-                    Text("${pin.diagnosis} • ${pin.severity}", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+                    val disLabel = if (pin.pinDisabilityPercent > 0) " • Disability: ${pin.pinDisabilityPercent.toInt()}%" else ""
+                    Text("${pin.diagnosis} • ${pin.severity}$disLabel", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
                 }
                 IconButton(onClick = { scope.launch { dao.deleteInjury(pin) } }) {
                     Icon(Icons.Default.DeleteOutline, contentDescription = "Delete Pin", tint = CrimsonDanger)
@@ -416,20 +455,145 @@ private fun InjuriesTab(bundle: FullCaseBundle, dao: McopDao) {
         }
     }
 
+    // 3. Direct Disability & Other Compensation Heads Editor on the Same Page
+    var funcDisStr by remember(c.id, c.functionalDisabilityPercent) { mutableStateOf(c.functionalDisabilityPercent.toInt().toString()) }
+    var permDisStr by remember(c.id, c.permanentDisabilityPercent) { mutableStateOf(c.permanentDisabilityPercent.toInt().toString()) }
+    var painStr by remember(c.id, c.painAndSufferingBase) { mutableStateOf(c.painAndSufferingBase.toInt().toString()) }
+    var attendantStr by remember(c.id, c.attendantAndNourishmentBase) { mutableStateOf(c.attendantAndNourishmentBase.toInt().toString()) }
+    var transportStr by remember(c.id, c.transportAndDamageBase) { mutableStateOf(c.transportAndDamageBase.toInt().toString()) }
+    var futureMedStr by remember(c.id, c.futureMedicalExpensesBase) { mutableStateOf(c.futureMedicalExpensesBase.toInt().toString()) }
+    var restMosStr by remember(c.id, c.treatmentMonths) { mutableStateOf(c.treatmentMonths.toString()) }
+
+    Card(colors = CardDefaults.cardColors(containerColor = CardWhite), shape = RoundedCornerShape(16.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text("Disability & Other Compensation Heads", fontWeight = FontWeight.Bold, color = NavyPrimary)
+                if (report.summedPinDisability > 0) {
+                    TextButton(onClick = {
+                        funcDisStr = report.summedPinDisability.toInt().toString()
+                        scope.launch { dao.upsertCase(c.copy(functionalDisabilityPercent = report.summedPinDisability)) }
+                    }) {
+                        Text("Apply Pin Sum (${report.summedPinDisability.toInt()}%)")
+                    }
+                }
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = funcDisStr,
+                    onValueChange = {
+                        funcDisStr = it
+                        it.toDoubleOrNull()?.let { v -> scope.launch { dao.upsertCase(c.copy(functionalDisabilityPercent = v)) } }
+                    },
+                    label = { Text("Functional Dis. %") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = permDisStr,
+                    onValueChange = {
+                        permDisStr = it
+                        it.toDoubleOrNull()?.let { v -> scope.launch { dao.upsertCase(c.copy(permanentDisabilityPercent = v)) } }
+                    },
+                    label = { Text("Permanent Dis. %") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = restMosStr,
+                    onValueChange = {
+                        restMosStr = it
+                        it.toIntOrNull()?.let { v -> scope.launch { dao.upsertCase(c.copy(treatmentMonths = v)) } }
+                    },
+                    label = { Text("Rest (Mos)") },
+                    modifier = Modifier.weight(0.8f),
+                    singleLine = true
+                )
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = painStr,
+                    onValueChange = {
+                        painStr = it
+                        it.toDoubleOrNull()?.let { v -> scope.launch { dao.upsertCase(c.copy(painAndSufferingBase = v)) } }
+                    },
+                    label = { Text("Pain & Suffering ₹") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = attendantStr,
+                    onValueChange = {
+                        attendantStr = it
+                        it.toDoubleOrNull()?.let { v -> scope.launch { dao.upsertCase(c.copy(attendantAndNourishmentBase = v)) } }
+                    },
+                    label = { Text("Attendant + Nourish ₹") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true
+                )
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = transportStr,
+                    onValueChange = {
+                        transportStr = it
+                        it.toDoubleOrNull()?.let { v -> scope.launch { dao.upsertCase(c.copy(transportAndDamageBase = v)) } }
+                    },
+                    label = { Text("Transport + Clothes ₹") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = futureMedStr,
+                    onValueChange = {
+                        futureMedStr = it
+                        it.toDoubleOrNull()?.let { v -> scope.launch { dao.upsertCase(c.copy(futureMedicalExpensesBase = v)) } }
+                    },
+                    label = { Text("Future Medical ₹") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true
+                )
+            }
+        }
+    }
+
+    // 4. Overall Live Calculation Summary Card right on the Injuries Page
+    Card(colors = CardDefaults.cardColors(containerColor = NavyPrimary), shape = RoundedCornerShape(16.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Live Overall Compensation Calculation", fontWeight = FontWeight.Bold, color = Color.White)
+            LedgerRowWhite("Loss of Future Earning (${report.projectionA.effectiveDisabilityPercent.toInt()}% FD)", report.projectionA.lossOfEarningOrDependency)
+            LedgerRowWhite("Verified Medical Bills (Ex.P8)", report.projectionA.verifiedMedicalBills)
+            LedgerRowWhite("Pain & Suffering", report.projectionA.painAndSuffering)
+            LedgerRowWhite("Treatment Loss (${c.treatmentMonths}m) + Attendant", report.projectionA.lossOfIncomeDuringTreatment + report.projectionA.attendantAndNourishment)
+            LedgerRowWhite("Transport, Damage & Future Medical", report.projectionA.transportAndFutureMedical)
+            HorizontalDivider(color = Color.White.copy(alpha = 0.25f))
+            LedgerRowWhite("Total Principal Award (Proj. A)", report.projectionA.principalAward, bold = true)
+            LedgerRowWhite("Gross Award + ${c.interestRatePercent}% Interest", report.projectionA.grossTotal, bold = true)
+            LedgerRowWhite("Proj. B Expense-Adjusted Target", report.projectionB.grossTotal, bold = true)
+        }
+    }
+
+    // Pin Creation Dialog with Disability % Field
     pendingTap?.let { (nx, ny, defaultRegion) ->
         var region by remember { mutableStateOf(defaultRegion) }
         var diagnosis by remember { mutableStateOf("") }
         var severity by remember { mutableStateOf("GRIEVOUS") }
+        var pinDisText by remember { mutableStateOf("10") }
         var exhibit by remember { mutableStateOf("Ex.P${bundle.injuries.size + 3}") }
 
         AlertDialog(
             onDismissRequest = { pendingTap = null },
-            title = { Text("Log Anatomical Injury Pin", fontWeight = FontWeight.Bold) },
+            title = { Text("Pin Anatomical Injury & Disability", fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(value = region, onValueChange = { region = it }, label = { Text("Anatomical Region") })
-                    OutlinedTextField(value = diagnosis, onValueChange = { diagnosis = it }, label = { Text("Clinical Diagnosis (e.g., Comminuted Tibia Fracture)") })
-                    OutlinedTextField(value = exhibit, onValueChange = { exhibit = it }, label = { Text("Exhibit Reference") })
+                    OutlinedTextField(value = diagnosis, onValueChange = { diagnosis = it }, label = { Text("Clinical Diagnosis (e.g., Femur Fracture)") })
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(value = pinDisText, onValueChange = { pinDisText = it }, label = { Text("Disability %") }, modifier = Modifier.weight(1f))
+                        OutlinedTextField(value = exhibit, onValueChange = { exhibit = it }, label = { Text("Exhibit Tag") }, modifier = Modifier.weight(1f))
+                    }
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         listOf("GRIEVOUS", "SIMPLE", "NERVE").forEach { sev ->
                             FilterChip(selected = severity == sev, onClick = { severity = sev }, label = { Text(sev) })
@@ -440,6 +604,7 @@ private fun InjuriesTab(bundle: FullCaseBundle, dao: McopDao) {
             confirmButton = {
                 Button(onClick = {
                     scope.launch {
+                        val addedDis = pinDisText.toDoubleOrNull() ?: 0.0
                         dao.insertInjury(
                             InjuryPinEntity(
                                 caseId = bundle.case.id,
@@ -449,12 +614,18 @@ private fun InjuriesTab(bundle: FullCaseBundle, dao: McopDao) {
                                 regionName = region.trim().ifBlank { defaultRegion },
                                 diagnosis = diagnosis.trim().ifBlank { "Traumatic Injury" },
                                 severity = severity,
+                                pinDisabilityPercent = addedDis,
                                 exhibitTag = exhibit.trim().ifBlank { "Ex.P3" }
                             )
                         )
+                        // Auto-sync functional disability if not manually overridden
+                        val newTotalDis = bundle.injuries.sumOf { it.pinDisabilityPercent } + addedDis
+                        if (newTotalDis > 0.0) {
+                            dao.upsertCase(c.copy(functionalDisabilityPercent = newTotalDis))
+                        }
                         pendingTap = null
                     }
-                }) { Text("Pin Injury") }
+                }) { Text("Save Injury Pin") }
             }
         )
     }
@@ -463,7 +634,7 @@ private fun InjuriesTab(bundle: FullCaseBundle, dao: McopDao) {
 @Composable
 private fun HeirsTab(
     bundle: FullCaseBundle,
-    report: com.kamarajlaw.mactmedlegal.domain.CaseAnalysisReport,
+    report: CaseAnalysisReport,
     dao: McopDao
 ) {
     val scope = rememberCoroutineScope()
@@ -532,11 +703,51 @@ private fun HeirsTab(
 private fun SceneTab(bundle: FullCaseBundle, dao: McopDao) {
     val scope = rememberCoroutineScope()
     var selectedItem by remember { mutableStateOf<SceneItemEntity?>(null) }
+    var scenarioSummary by remember(bundle.case.id) { mutableStateOf(bundle.case.accidentScenarioSummary) }
     var notes by remember(bundle.case.id) { mutableStateOf(bundle.case.spotMahazarNotes) }
 
     Card(colors = CardDefaults.cardColors(containerColor = CardWhite), shape = RoundedCornerShape(16.dp)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Spot Mahazar (Ex.P2) Rough Sketch Reconstruction", fontWeight = FontWeight.Bold, color = NavyPrimary)
+            Text("Spot Mahazar (Ex.P2) Accident Reconstruction", fontWeight = FontWeight.Bold, color = NavyPrimary)
+
+            // 1-Tap Scenario Presets for Rapid Court Reconstruction
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                OutlinedButton(onClick = {
+                    scope.launch {
+                        dao.clearScene(bundle.case.id)
+                        dao.upsertCase(bundle.case.copy(roadLayout = "TWO_LANE", accidentScenarioSummary = "Head-On Collision: Offending Lorry crossed center line onto wrong side"))
+                        dao.upsertSceneItem(SceneItemEntity(caseId = bundle.case.id, itemType = "LORRY", label = "Offending Lorry", normX = 0.44f, normY = 0.58f, rotationDeg = 180f))
+                        dao.upsertSceneItem(SceneItemEntity(caseId = bundle.case.id, itemType = "BIKE", label = "Petitioner Bike", normX = 0.62f, normY = 0.60f, rotationDeg = 0f))
+                        dao.upsertSceneItem(SceneItemEntity(caseId = bundle.case.id, itemType = "IMPACT_X", label = "Impact X", normX = 0.53f, normY = 0.59f))
+                        dao.upsertSceneItem(SceneItemEntity(caseId = bundle.case.id, itemType = "SKID", label = "Skid 18ft", normX = 0.32f, normY = 0.54f))
+                    }
+                }) { Text("Preset: Head-On") }
+
+                OutlinedButton(onClick = {
+                    scope.launch {
+                        dao.clearScene(bundle.case.id)
+                        dao.upsertCase(bundle.case.copy(roadLayout = "FOUR_LANE", accidentScenarioSummary = "Rear-End Impact: Speeding Car rammed Petitioner Bike from behind"))
+                        dao.upsertSceneItem(SceneItemEntity(caseId = bundle.case.id, itemType = "CAR", label = "Offending Car", normX = 0.44f, normY = 0.61f))
+                        dao.upsertSceneItem(SceneItemEntity(caseId = bundle.case.id, itemType = "BIKE", label = "Petitioner Bike", normX = 0.58f, normY = 0.61f))
+                        dao.upsertSceneItem(SceneItemEntity(caseId = bundle.case.id, itemType = "IMPACT_X", label = "Rear Impact", normX = 0.51f, normY = 0.61f))
+                    }
+                }) { Text("Preset: Rear-End") }
+
+                OutlinedButton(onClick = {
+                    scope.launch {
+                        dao.clearScene(bundle.case.id)
+                        dao.upsertCase(bundle.case.copy(roadLayout = "T_JUNCTION", accidentScenarioSummary = "T-Junction T-Bone: Lorry entered main highway without halting"))
+                        dao.upsertSceneItem(SceneItemEntity(caseId = bundle.case.id, itemType = "LORRY", label = "Offending Lorry", normX = 0.50f, normY = 0.66f, rotationDeg = 270f))
+                        dao.upsertSceneItem(SceneItemEntity(caseId = bundle.case.id, itemType = "BIKE", label = "Petitioner Bike", normX = 0.44f, normY = 0.56f))
+                        dao.upsertSceneItem(SceneItemEntity(caseId = bundle.case.id, itemType = "IMPACT_X", label = "Junction Impact", normX = 0.48f, normY = 0.58f))
+                    }
+                }) { Text("Preset: T-Junction") }
+            }
+
+            // Road Layout Selector
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 listOf("TWO_LANE" to "2-Lane", "FOUR_LANE" to "4-Lane", "T_JUNCTION" to "T-Jn", "CROSSROADS" to "4-Way")
                     .forEach { (layout, label) ->
@@ -558,16 +769,32 @@ private fun SceneTab(bundle: FullCaseBundle, dao: McopDao) {
                 }
             )
 
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+            // Palette of Placeable Vehicles & Spot Markers
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
                 Button(onClick = {
-                    scope.launch { dao.upsertSceneItem(SceneItemEntity(caseId = bundle.case.id, itemType = "LORRY", label = "Offending", normX = 0.42f, normY = 0.42f)) }
-                }, modifier = Modifier.weight(1f)) { Text("+ Lorry") }
+                    scope.launch { dao.upsertSceneItem(SceneItemEntity(caseId = bundle.case.id, itemType = "LORRY", label = "Lorry/Bus", normX = 0.40f, normY = 0.42f)) }
+                }) { Text("+ Lorry") }
                 Button(onClick = {
-                    scope.launch { dao.upsertSceneItem(SceneItemEntity(caseId = bundle.case.id, itemType = "BIKE", label = "Petitioner", normX = 0.62f, normY = 0.58f)) }
-                }, modifier = Modifier.weight(1f)) { Text("+ Bike") }
+                    scope.launch { dao.upsertSceneItem(SceneItemEntity(caseId = bundle.case.id, itemType = "CAR", label = "Car/Auto", normX = 0.45f, normY = 0.58f)) }
+                }) { Text("+ Car") }
+                Button(onClick = {
+                    scope.launch { dao.upsertSceneItem(SceneItemEntity(caseId = bundle.case.id, itemType = "BIKE", label = "Petitioner Bike", normX = 0.62f, normY = 0.58f)) }
+                }) { Text("+ Bike") }
+                OutlinedButton(onClick = {
+                    scope.launch { dao.upsertSceneItem(SceneItemEntity(caseId = bundle.case.id, itemType = "PEDESTRIAN", label = "Pedestrian", normX = 0.55f, normY = 0.68f)) }
+                }) { Text("+ Pedestrian") }
                 OutlinedButton(onClick = {
                     scope.launch { dao.upsertSceneItem(SceneItemEntity(caseId = bundle.case.id, itemType = "IMPACT_X", label = "Impact X", normX = 0.52f, normY = 0.50f)) }
-                }, modifier = Modifier.weight(1f)) { Text("+ Impact") }
+                }) { Text("+ Impact X") }
+                OutlinedButton(onClick = {
+                    scope.launch { dao.upsertSceneItem(SceneItemEntity(caseId = bundle.case.id, itemType = "SKID", label = "Skid Marks", normX = 0.35f, normY = 0.50f)) }
+                }) { Text("+ Skid") }
+                OutlinedButton(onClick = {
+                    scope.launch { dao.upsertSceneItem(SceneItemEntity(caseId = bundle.case.id, itemType = "ARROW_R", label = "Direction", normX = 0.30f, normY = 0.60f)) }
+                }) { Text("+ Arrow") }
             }
 
             selectedItem?.let { sel ->
@@ -587,12 +814,22 @@ private fun SceneTab(bundle: FullCaseBundle, dao: McopDao) {
             }
 
             OutlinedTextField(
+                value = scenarioSummary,
+                onValueChange = {
+                    scenarioSummary = it
+                    scope.launch { dao.upsertCase(bundle.case.copy(accidentScenarioSummary = it)) }
+                },
+                label = { Text("Manner of Accident (e.g., Wrong-side head-on collision)") },
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            OutlinedTextField(
                 value = notes,
                 onValueChange = {
                     notes = it
                     scope.launch { dao.upsertCase(bundle.case.copy(spotMahazarNotes = it)) }
                 },
-                label = { Text("Spot Mahazar Landmarks & Width Notes (Ex.P2)") },
+                label = { Text("Spot Mahazar Landmarks & Road Width Notes (Ex.P2)") },
                 modifier = Modifier.fillMaxWidth()
             )
         }
@@ -600,20 +837,41 @@ private fun SceneTab(bundle: FullCaseBundle, dao: McopDao) {
 }
 
 @Composable
-private fun DocsTab(bundle: FullCaseBundle, dao: McopDao, onScanClick: () -> Unit) {
+private fun DocsTab(
+    bundle: FullCaseBundle,
+    dao: McopDao,
+    onScanClick: () -> Unit,
+    onAttachClick: () -> Unit
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    Button(onClick = onScanClick, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) {
-        Icon(Icons.Default.DocumentScanner, contentDescription = null)
-        Spacer(Modifier.width(8.dp))
-        Text("Scan Court Document / Medical Bill (ML Kit)")
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        Button(
+            onClick = onScanClick,
+            modifier = Modifier.weight(1f),
+            shape = RoundedCornerShape(14.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary)
+        ) {
+            Icon(Icons.Default.DocumentScanner, contentDescription = null)
+            Spacer(Modifier.width(6.dp))
+            Text("Scan Doc")
+        }
+        OutlinedButton(
+            onClick = onAttachClick,
+            modifier = Modifier.weight(1f),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Icon(Icons.Default.AttachFile, contentDescription = null)
+            Spacer(Modifier.width(6.dp))
+            Text("Attach File")
+        }
     }
 
     if (bundle.documents.isEmpty()) {
         Card(colors = CardDefaults.cardColors(containerColor = CardWhite), shape = RoundedCornerShape(14.dp)) {
             Text(
-                "No scanned exhibits yet. Scan FIR, Wound Certificate, Disability Certificate, or Medical Bills (which auto-sum into Projections A & B).",
+                "No scanned or attached documents saved under ${bundle.case.mcopNumber} yet. Use 'Scan Doc' (camera) or 'Attach File' (PDF/Images from phone) to store FIR, Wound Certificate, Disability Certificate, Policy, and Medical Bills.",
                 modifier = Modifier.padding(16.dp),
                 style = MaterialTheme.typography.bodySmall,
                 color = TextSecondary
@@ -624,15 +882,17 @@ private fun DocsTab(bundle: FullCaseBundle, dao: McopDao, onScanClick: () -> Uni
             Card(colors = CardDefaults.cardColors(containerColor = CardWhite), shape = RoundedCornerShape(14.dp)) {
                 Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("${doc.exhibitNumber} — ${doc.title}", fontWeight = FontWeight.Bold)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("${doc.exhibitNumber} — ${doc.title}", fontWeight = FontWeight.Bold)
+                        }
                         val billNote = if (doc.billAmount > 0) " • Bill: ${ClientActions.formatInr(doc.billAmount)}" else ""
-                        Text("${doc.pageCount} pages$billNote", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+                        Text("${doc.sourceType} • ${doc.pageCount}p$billNote", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
                     }
                     Row {
-                        IconButton(onClick = { ClientActions.openFile(context, doc.localFilePath) }) {
+                        IconButton(onClick = { ClientActions.openFile(context, doc.localFilePath, doc.mimeType) }) {
                             Icon(Icons.Default.Visibility, contentDescription = "View", tint = NavyPrimary)
                         }
-                        IconButton(onClick = { ClientActions.shareFile(context, doc.localFilePath, doc.title) }) {
+                        IconButton(onClick = { ClientActions.shareFile(context, doc.localFilePath, doc.title, doc.mimeType) }) {
                             Icon(Icons.Default.Share, contentDescription = "Share", tint = TealAccent)
                         }
                         IconButton(onClick = { scope.launch { dao.deleteDocument(doc) } }) {
@@ -648,7 +908,7 @@ private fun DocsTab(bundle: FullCaseBundle, dao: McopDao, onScanClick: () -> Uni
 @Composable
 private fun ExpensesTab(
     bundle: FullCaseBundle,
-    report: com.kamarajlaw.mactmedlegal.domain.CaseAnalysisReport,
+    report: CaseAnalysisReport,
     dao: McopDao
 ) {
     val scope = rememberCoroutineScope()

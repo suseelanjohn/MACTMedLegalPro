@@ -23,6 +23,7 @@ data class AwardBreakdown(
     val painAndSuffering: Double,
     val lossOfIncomeDuringTreatment: Double,
     val attendantAndNourishment: Double,
+    val transportAndFutureMedical: Double,
     val conventionalHeads: Double,
     val principalAward: Double,
     val accruedInterest: Double,
@@ -41,6 +42,7 @@ data class CaseAnalysisReport(
     val isModerate: Boolean,
     val defences: List<DefenceAlert>,
     val elapsedYears: Double,
+    val summedPinDisability: Double,
     val totalExpensesSpent: Double,
     val totalAdvancesReceived: Double,
     val netUnrecoveredExpenses: Double,
@@ -78,6 +80,8 @@ object ValuationEngine {
 
     fun analyze(bundle: FullCaseBundle, nowMillis: Long = System.currentTimeMillis()): CaseAnalysisReport {
         val c = bundle.case
+        val summedPins = bundle.injuries.sumOf { it.pinDisabilityPercent }
+        val activeFuncDisability = if (c.functionalDisabilityPercent > 0.0) c.functionalDisabilityPercent else summedPins
 
         // 1. 100-Point Evidence Score Map
         val liabilityScore = (if (c.hasChargeSheetFiled) 14 else 4) +
@@ -93,7 +97,7 @@ object ValuationEngine {
             ClaimCategory.SECTION_164_NO_FAULT -> 24
             else -> {
                 val pinBonus = (bundle.injuries.size * 4).coerceAtMost(12)
-                val disBonus = if (c.functionalDisabilityPercent > 0) 14 else 8
+                val disBonus = if (activeFuncDisability > 0) 14 else 8
                 (4 + pinBonus + disBonus).coerceAtMost(30)
             }
         }
@@ -119,7 +123,7 @@ object ValuationEngine {
                     DefenceAlert(
                         title = "No Active Third-Party Insurance Policy",
                         legalPrinciple = "Owner Liability Only (Sec. 146 MV Act)",
-                        counterStrategy = "Verify cover note / renewal grace period; proceed directly against registered vehicle owner & attach vehicle."
+                        counterStrategy = "Verify cover note / renewal grace period; proceed directly against registered owner (${c.respondentOwnerName.ifBlank { "R1" }}) & attach vehicle."
                     )
                 )
             }
@@ -128,7 +132,7 @@ object ValuationEngine {
                     DefenceAlert(
                         title = "Invalid DL / Missing Transport Badge",
                         legalPrinciple = "National Insurance Co. Ltd. vs. Swaran Singh",
-                        counterStrategy = "Press for 'Pay and Recover' order against the Insurer; third-party claimant cannot be denied compensation."
+                        counterStrategy = "Press for 'Pay and Recover' direction against Insurer (${c.insuranceCompanyName.ifBlank { "R2" }}); third-party victim cannot be denied compensation."
                     )
                 )
             }
@@ -137,7 +141,7 @@ object ValuationEngine {
                     DefenceAlert(
                         title = "Contributory Negligence Plea (10%–25% Cut Risk)",
                         legalPrinciple = "Mohammed Siddique vs. National Insurance Co.",
-                        counterStrategy = "Rely on Spot Mahazar (Ex.P2) & MVI Report to prove sole negligence of offending vehicle."
+                        counterStrategy = "Rely on Spot Mahazar (Ex.P2) & MVI Report to prove sole negligence of ${c.offendingVehicleReg.ifBlank { "offending vehicle" }}."
                     )
                 )
             }
@@ -146,7 +150,7 @@ object ValuationEngine {
                     DefenceAlert(
                         title = "FIR Delay (${c.firDelayDays} Days) — Vehicle Implantation Plea",
                         legalPrinciple = "Ravi vs. Badrinarayan (2011) 4 SCC 693",
-                        counterStrategy = "Produce Accident Register (AR) entry recorded on the date of accident showing RTA history immediately upon admission."
+                        counterStrategy = "Produce Accident Register (AR) entry from ${c.hospitalName.ifBlank { "treating hospital" }} recorded on the date of accident."
                     )
                 )
             }
@@ -179,7 +183,7 @@ object ValuationEngine {
         val fpPct = pranaySethiFutureProspects(c.age, c.isSalariedPermanent)
 
         // 4. Projection A (Record-Strict Statutory Award)
-        val projA = computeProjectionA(c, baseIncome, mult, fpPct, verifiedBills, bundle.heirs.size, interestFactor)
+        val projA = computeProjectionA(c, baseIncome, activeFuncDisability, mult, fpPct, verifiedBills, bundle.heirs.size, interestFactor)
 
         // 5. Projection B (Expense-Tallying Target Projection)
         val targetPrincipalBump = if (totalSpent > 0.0) totalSpent / (1.0 + interestFactor) else 0.0
@@ -206,6 +210,7 @@ object ValuationEngine {
             isModerate = totalScore in 50..74,
             defences = defences,
             elapsedYears = elapsedYears,
+            summedPinDisability = summedPins,
             totalExpensesSpent = totalSpent,
             totalAdvancesReceived = totalAdvance,
             netUnrecoveredExpenses = netUnrecovered,
@@ -220,6 +225,7 @@ object ValuationEngine {
     private fun computeProjectionA(
         c: CaseEntity,
         baseIncome: Double,
+        activeFuncDisability: Double,
         mult: Int,
         fpPct: Int,
         verifiedBills: Double,
@@ -232,7 +238,7 @@ object ValuationEngine {
                 val interest = principal * interestFactor
                 AwardBreakdown(
                     assessedMonthlyIncome = baseIncome,
-                    effectiveDisabilityPercent = c.functionalDisabilityPercent,
+                    effectiveDisabilityPercent = activeFuncDisability,
                     multiplier = 0,
                     futureProspectsPercent = 0,
                     lossOfEarningOrDependency = principal,
@@ -240,6 +246,7 @@ object ValuationEngine {
                     painAndSuffering = 0.0,
                     lossOfIncomeDuringTreatment = 0.0,
                     attendantAndNourishment = 0.0,
+                    transportAndFutureMedical = 0.0,
                     conventionalHeads = 0.0,
                     principalAward = principal,
                     accruedInterest = interest,
@@ -271,6 +278,7 @@ object ValuationEngine {
                     painAndSuffering = 0.0,
                     lossOfIncomeDuringTreatment = 0.0,
                     attendantAndNourishment = 0.0,
+                    transportAndFutureMedical = 0.0,
                     conventionalHeads = conventional,
                     principalAward = principal,
                     accruedInterest = interest,
@@ -281,7 +289,7 @@ object ValuationEngine {
 
             else -> {
                 val disPct = if (c.claimCategory == ClaimCategory.INJURY_FUNCTIONAL_DISABILITY) {
-                    c.functionalDisabilityPercent
+                    activeFuncDisability
                 } else 0.0
 
                 val lossOfFutureEarning = if (disPct > 0.0) {
@@ -293,7 +301,8 @@ object ValuationEngine {
                 val treatmentLoss = baseIncome * c.treatmentMonths
                 val pain = if (c.claimCategory == ClaimCategory.INJURY_SIMPLE) 15000.0 else c.painAndSufferingBase
                 val attendant = if (c.claimCategory == ClaimCategory.INJURY_SIMPLE) 5000.0 else c.attendantAndNourishmentBase
-                val principal = lossOfFutureEarning + verifiedBills + pain + treatmentLoss + attendant
+                val extraHeads = if (c.claimCategory == ClaimCategory.INJURY_SIMPLE) 3000.0 else (c.transportAndDamageBase + c.futureMedicalExpensesBase)
+                val principal = lossOfFutureEarning + verifiedBills + pain + treatmentLoss + attendant + extraHeads
                 val interest = principal * interestFactor
 
                 AwardBreakdown(
@@ -306,6 +315,7 @@ object ValuationEngine {
                     painAndSuffering = pain,
                     lossOfIncomeDuringTreatment = treatmentLoss,
                     attendantAndNourishment = attendant,
+                    transportAndFutureMedical = extraHeads,
                     conventionalHeads = 0.0,
                     principalAward = principal,
                     accruedInterest = interest,
@@ -364,7 +374,7 @@ object ValuationEngine {
             val residualGap = max(0.0, targetPrincipalBump - gainedFromDisability)
             val newPain = projA.painAndSuffering + (residualGap * 0.6)
             val newAttendant = projA.attendantAndNourishment + (residualGap * 0.4)
-            val newPrincipal = newLossEarning + verifiedBills + newPain + projA.lossOfIncomeDuringTreatment + newAttendant
+            val newPrincipal = newLossEarning + verifiedBills + newPain + projA.lossOfIncomeDuringTreatment + newAttendant + projA.transportAndFutureMedical
             val newInterest = newPrincipal * interestFactor
 
             projA.copy(
@@ -380,7 +390,7 @@ object ValuationEngine {
         } else {
             val newPain = projA.painAndSuffering + (targetPrincipalBump * 0.6)
             val newAttendant = projA.attendantAndNourishment + (targetPrincipalBump * 0.4)
-            val newPrincipal = projA.lossOfEarningOrDependency + verifiedBills + newPain + projA.lossOfIncomeDuringTreatment + newAttendant
+            val newPrincipal = projA.lossOfEarningOrDependency + verifiedBills + newPain + projA.lossOfIncomeDuringTreatment + newAttendant + projA.transportAndFutureMedical
             val newInterest = newPrincipal * interestFactor
 
             projA.copy(
